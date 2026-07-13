@@ -1,13 +1,15 @@
-// TODO (Fase 3): trocar mock-data por leitura real do banco (Member +
-// MatchAppearance) filtrando por gamertag. Se não achar, usar notFound().
+// Fase 3 — Jovem Nuggs FC
+// Perfil individual do jogador conectado ao banco de dados real.
 
 import { notFound } from "next/navigation";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { StatReadout } from "@/components/ui/StatReadout";
 import { PlayerRatingChart } from "@/components/PlayerRatingChart";
-import { mockMembers } from "@/lib/mock-data";
+import { db } from "@/lib/db";
 import { formatPercent } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
 
 const POSITION_LABEL = {
   GOALKEEPER: "Goleiro",
@@ -17,22 +19,36 @@ const POSITION_LABEL = {
   ANY: "—",
 } as const;
 
-// Últimas notas de exemplo — Fase 3: puxar de MatchAppearance de verdade.
-function mockRecentRatings(seed: number) {
-  return Array.from({ length: 8 }, (_, i) => ({
-    match: `#${i + 1}`,
-    rating: Number((6 + ((seed + i * 3) % 30) / 10).toFixed(1)),
-  }));
-}
-
-export default function PlayerPage({ params }: { params: { tag: string } }) {
-  const member = mockMembers.find(
-    (m) => m.gamertag.toLowerCase() === decodeURIComponent(params.tag).toLowerCase()
-  );
+export default async function PlayerPage({ params }: { params: { tag: string } }) {
+  const gamertag = decodeURIComponent(params.tag);
+  
+  const member = await db.member.findFirst({
+    where: { 
+      gamertag: {
+        equals: gamertag
+      }
+    },
+    include: {
+      appearances: {
+        include: {
+          match: true,
+        },
+        orderBy: {
+          match: { playedAt: "desc" },
+        },
+        take: 10,
+      },
+    },
+  });
 
   if (!member) notFound();
 
-  const ratingHistory = mockRecentRatings(member.eaMemberId.length + member.goals);
+  const ratingHistory = member.appearances
+    .map((app, i) => ({
+      match: app.match.playedAt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
+      rating: app.rating,
+    }))
+    .reverse();
 
   return (
     <div className="space-y-8">
@@ -42,7 +58,7 @@ export default function PlayerPage({ params }: { params: { tag: string } }) {
         </p>
         <div className="flex items-center gap-3">
           <h1 className="font-mono text-2xl font-bold text-paper-100">{member.gamertag}</h1>
-          <Badge tone="mint">{POSITION_LABEL[member.position]}</Badge>
+          <Badge tone="mint">{POSITION_LABEL[member.position as keyof typeof POSITION_LABEL] || "—"}</Badge>
         </div>
       </div>
 
@@ -69,10 +85,46 @@ export default function PlayerPage({ params }: { params: { tag: string } }) {
         </Card>
       </section>
 
-      <Card hud>
-        <CardLabel>Evolução de nota — últimas partidas</CardLabel>
-        <PlayerRatingChart data={ratingHistory} />
-      </Card>
+      <section className="grid gap-4 lg:grid-cols-2">
+        <Card hud>
+          <CardLabel>Evolução de nota — últimas partidas</CardLabel>
+          <PlayerRatingChart data={ratingHistory} />
+        </Card>
+
+        <Card>
+          <CardLabel>Últimas atuações</CardLabel>
+          <div className="mt-4 space-y-3">
+            {member.appearances.length > 0 ? (
+              member.appearances.map((app) => (
+                <div 
+                  key={app.id} 
+                  className="flex items-center justify-between rounded-lg border border-ink-700/60 bg-ink-900/40 px-4 py-3"
+                >
+                  <div className="flex flex-col">
+                    <span className="text-xs font-mono text-fog-500 uppercase tracking-tighter">
+                      vs {app.match.opponentName}
+                    </span>
+                    <span className="text-[10px] text-fog-600">
+                      {app.match.playedAt.toLocaleDateString("pt-BR")}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    {app.goals > 0 && <Badge tone="mint">{app.goals} G</Badge>}
+                    {app.motm && <Badge tone="violet">MOTM</Badge>}
+                    <span className="font-mono text-lg font-bold text-paper-100">
+                      {app.rating.toFixed(1)}
+                    </span>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="py-8 text-center font-mono text-xs text-fog-600 uppercase">
+                Nenhuma atuação registrada no cache.
+              </p>
+            )}
+          </div>
+        </Card>
+      </section>
     </div>
   );
 }

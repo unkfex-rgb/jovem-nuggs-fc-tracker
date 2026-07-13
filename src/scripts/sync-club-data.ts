@@ -1,17 +1,10 @@
 /**
  * Sincroniza os dados do clube com a EA e persiste no banco.
- *
- * Uso direto (fora do Next.js): `npm run sync`
- * Uso via web: POST /api/sync (ver src/app/api/sync/route.ts)
- *
- * Fase 1 (MANUS_PROMPT.md): este arquivo já orquestra o fluxo certo
- * (overview -> membros -> partidas -> grava tudo). O que falta é validar os
- * mapeamentos em ea-client.ts contra o payload real da EA.
  */
 
-import { db } from "@/lib/db";
-import { fetchClubOverview, fetchClubMembers, fetchClubMatches } from "@/lib/ea-client";
-import type { MatchType } from "@/lib/types";
+import { db } from "../lib/db";
+import { fetchClubOverview, fetchClubMembers, fetchClubMatches } from "../lib/ea-client";
+import type { MatchType } from "../lib/types";
 
 const CLUB_ID = process.env.EA_CLUB_ID ?? "8044401";
 const PLATFORM = process.env.EA_PLATFORM ?? "common-gen5";
@@ -51,7 +44,7 @@ export async function syncClubData() {
     },
   });
 
-  console.log(`[sync] clube ok: ${club.name} (${club.id})`);
+  console.log(`[sync] clube ok: ${club.name}`);
 
   const members = await fetchClubMembers(CLUB_ID, PLATFORM);
   for (const m of members) {
@@ -71,7 +64,7 @@ export async function syncClubData() {
       },
       create: {
         eaMemberId: m.eaMemberId,
-        clubId: club.id,
+        clubId: club.id, // Usando clubId diretamente conforme o schema
         gamertag: m.gamertag,
         position: m.position,
         overallRating: m.overallRating,
@@ -90,26 +83,65 @@ export async function syncClubData() {
   let totalMatches = 0;
   for (const matchType of MATCH_TYPES) {
     const matches = await fetchClubMatches(CLUB_ID, PLATFORM, matchType);
-    for (const match of matches) {
-      await db.match.upsert({
-        where: { eaMatchId: match.eaMatchId },
+    for (const m of matches) {
+      const match = await db.match.upsert({
+        where: { eaMatchId: m.eaMatchId },
         update: {
-          goalsFor: match.goalsFor,
-          goalsAgainst: match.goalsAgainst,
-          result: match.result,
+          goalsFor: m.goalsFor,
+          goalsAgainst: m.goalsAgainst,
+          result: m.result,
+          rawPayload: JSON.stringify(m.raw),
         },
         create: {
-          eaMatchId: match.eaMatchId,
+          eaMatchId: m.eaMatchId,
           clubId: club.id,
-          matchType: match.matchType,
-          playedAt: match.playedAt,
-          opponentName: match.opponentName,
-          opponentCrestUrl: match.opponentCrestUrl,
-          goalsFor: match.goalsFor,
-          goalsAgainst: match.goalsAgainst,
-          result: match.result,
+          matchType: m.matchType,
+          playedAt: m.playedAt,
+          opponentName: m.opponentName,
+          opponentCrestUrl: m.opponentCrestUrl,
+          goalsFor: m.goalsFor,
+          goalsAgainst: m.goalsAgainst,
+          result: m.result,
+          rawPayload: JSON.stringify(m.raw),
         },
       });
+
+      if (m.players && m.players.length > 0) {
+        for (const p of m.players) {
+          const member = await db.member.findFirst({
+            where: { gamertag: p.gamertag }
+          });
+
+          if (member) {
+            await db.matchAppearance.upsert({
+              where: {
+                matchId_memberId: {
+                  matchId: match.id,
+                  memberId: member.id
+                }
+              },
+              update: {
+                rating: p.rating,
+                goals: p.goals,
+                assists: p.assists,
+                passesMade: p.passesMade,
+                passesAttempted: p.passesAttempted,
+                motm: p.motm,
+              },
+              create: {
+                matchId: match.id,
+                memberId: member.id,
+                rating: p.rating,
+                goals: p.goals,
+                assists: p.assists,
+                passesMade: p.passesMade,
+                passesAttempted: p.passesAttempted,
+                motm: p.motm,
+              }
+            });
+          }
+        }
+      }
       totalMatches++;
     }
   }
@@ -118,7 +150,6 @@ export async function syncClubData() {
   return { clubId: club.id, members: members.length, matches: totalMatches };
 }
 
-// Permite rodar `npm run sync` direto via tsx
 if (require.main === module) {
   syncClubData()
     .then((r) => {

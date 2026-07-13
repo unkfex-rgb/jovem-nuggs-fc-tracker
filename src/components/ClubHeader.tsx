@@ -4,7 +4,15 @@ import { Badge } from "./ui/Badge";
 import { StatReadout } from "./ui/StatReadout";
 import { timeAgo } from "@/lib/utils";
 
-export function ClubHeader({ club }: { club: ClubOverview }) {
+interface ClubHeaderProps {
+  club: ClubOverview & {
+    matches?: { result: string }[];
+  };
+}
+
+export function ClubHeader({ club }: ClubHeaderProps) {
+  const recentForm = club.matches?.slice(0, 5).reverse() || [];
+
   return (
     <div className="relative overflow-hidden rounded-2xl border border-ink-700/60 bg-ink-800/40 p-6 sm:p-8">
       <div className="pointer-events-none absolute inset-0 bg-grid-fade" />
@@ -19,6 +27,7 @@ export function ClubHeader({ club }: { club: ClubOverview }) {
                 width={56}
                 height={56}
                 className="opacity-90"
+                unoptimized // Algumas URLs da EA podem precisar disso se não estiverem no next.config
               />
             ) : (
               <span className="font-mono text-2xl font-bold text-mint-400">
@@ -33,8 +42,24 @@ export function ClubHeader({ club }: { club: ClubOverview }) {
             <h1 className="font-mono text-2xl font-bold text-paper-100 sm:text-3xl">
               {club.name}
             </h1>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-3">
               {club.reputationTier && <Badge tone="mint">{club.reputationTier}</Badge>}
+              <div className="flex gap-1">
+                {recentForm.map((match, i) => (
+                  <div
+                    key={i}
+                    className={`h-4 w-4 rounded-sm flex items-center justify-center text-[8px] font-bold font-mono border ${
+                      match.result === "WIN"
+                        ? "bg-mint-400/10 border-mint-400/30 text-mint-400"
+                        : match.result === "LOSS"
+                          ? "bg-coral-400/10 border-coral-400/30 text-coral-400"
+                          : "bg-fog-400/10 border-fog-400/30 text-fog-400"
+                    }`}
+                  >
+                    {match.result[0]}
+                  </div>
+                ))}
+              </div>
               {club.lastSyncedAt && (
                 <span className="font-mono text-[11px] text-fog-500">
                   sincronizado {timeAgo(club.lastSyncedAt)}

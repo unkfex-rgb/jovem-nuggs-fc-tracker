@@ -1,9 +1,12 @@
-// TODO (Fase 2): trocar mock-data por leitura real do banco.
+// Fase 2 — Jovem Nuggs FC
+// Página de membros conectada ao banco de dados local.
 
 import { MembersTable } from "@/components/MembersTable";
 import { Card, CardLabel } from "@/components/ui/Card";
 import { StatReadout } from "@/components/ui/StatReadout";
-import { mockMembers } from "@/lib/mock-data";
+import { db } from "@/lib/db";
+
+export const dynamic = "force-dynamic";
 
 const POSITIONS = ["GOALKEEPER", "DEFENDER", "MIDFIELDER", "FORWARD"] as const;
 const POSITION_LABEL: Record<(typeof POSITIONS)[number], string> = {
@@ -13,8 +16,10 @@ const POSITION_LABEL: Record<(typeof POSITIONS)[number], string> = {
   FORWARD: "Atacantes",
 };
 
-export default function MembersPage() {
-  const members = mockMembers;
+export default async function MembersPage() {
+  const members = await db.member.findMany({
+    orderBy: { overallRating: "desc" },
+  });
 
   return (
     <div className="space-y-8">
@@ -42,7 +47,7 @@ export default function MembersPage() {
         ))}
       </div>
 
-      <MembersTable members={members} />
+      <MembersTable members={members as any} />
     </div>
   );
 }

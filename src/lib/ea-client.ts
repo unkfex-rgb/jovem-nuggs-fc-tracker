@@ -5,17 +5,12 @@
  * Páginas e componentes NUNCA importam isto diretamente — eles leem do banco
  * (via src/lib/db.ts). Só src/scripts/sync-club-data.ts e a rota
  * src/app/api/sync/route.ts usam este cliente.
- *
- * Fase 1 (ver MANUS_PROMPT.md): implementar de fato o `fetchWithRetry` e os
- * mapeamentos abaixo com o formato real de resposta da EA (hoje os `map*`
- * assumem um formato razoável, mas precisam ser conferidos contra a resposta
- * real, que pode variar).
  */
 
-import type { ClubOverview, MatchSummary, MemberSummary, MatchType, Position } from "./types";
+import type { ClubOverview, MatchSummary, MemberSummary, MatchType, Position, PlayerMatchAppearance } from "./types";
 
 const BASE_URL = "https://proclubs.ea.com/api/fc";
-const DEFAULT_TIMEOUT_MS = 8000;
+const DEFAULT_TIMEOUT_MS = 10000;
 const MAX_RETRIES = 3;
 
 interface FetchOptions {
@@ -25,7 +20,6 @@ interface FetchOptions {
 
 /**
  * Wrapper de fetch com timeout + retry com backoff exponencial.
- * Lança erro tipado em vez de deixar o caller lidar com `Response` cru.
  */
 async function fetchWithRetry(
   url: string,
@@ -41,7 +35,6 @@ async function fetchWithRetry(
       const res = await fetch(url, {
         signal: controller.signal,
         headers: {
-          // alguns proxies da EA recusam requests sem um User-Agent "normal"
           "User-Agent":
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
           Accept: "application/json",
@@ -49,7 +42,6 @@ async function fetchWithRetry(
       });
 
       if (res.status === 429) {
-        // rate limit — espera mais e tenta de novo
         await sleep(2 ** attempt * 1000);
         continue;
       }
@@ -60,7 +52,6 @@ async function fetchWithRetry(
 
       const contentType = res.headers.get("content-type") ?? "";
       if (!contentType.includes("application/json")) {
-        // a EA às vezes devolve HTML de erro genérico com status 200
         throw new EaApiError(`Resposta não-JSON de ${url} (provável instabilidade da EA)`);
       }
 
@@ -119,7 +110,7 @@ export async function fetchClubMatches(
   clubId: string,
   platform: string,
   matchType: MatchType
-): Promise<MatchSummary[]> {
+): Promise<(MatchSummary & { raw: any })[]> {
   const eaMatchType =
     matchType === "LEAGUE"
       ? "leagueMatch"
@@ -134,15 +125,15 @@ export async function fetchClubMatches(
 
 // ---------------------------------------------------------------------------
 // Mapeamento raw -> tipos de domínio
-// TODO (Fase 1): confirmar contra o payload real da EA e ajustar os paths.
 // ---------------------------------------------------------------------------
 
 function mapClubOverview(raw: unknown, clubId: string): ClubOverview {
-  const data = (raw as Record<string, any>)?.[clubId] ?? raw;
+  const list = Array.isArray(raw) ? raw : [];
+  const data = list.find((item: any) => String(item.clubId) === clubId) || list[0];
 
   return {
     eaClubId: clubId,
-    name: data?.name ?? "Clube desconhecido",
+    name: data?.name ?? "Jovem Nuggs FC",
     crestUrl: data?.crestAssetId ? crestUrlFromAssetId(data.crestAssetId) : null,
     skillRating: Number(data?.skillRating ?? 0),
     wins: Number(data?.wins ?? 0),
@@ -156,27 +147,37 @@ function mapClubOverview(raw: unknown, clubId: string): ClubOverview {
 }
 
 function mapMembers(raw: unknown): MemberSummary[] {
-  const list = Array.isArray(raw) ? raw : (Object.values(raw ?? {}) as any[]);
+  const data = raw as any;
+  const list = Array.isArray(data?.members) ? data.members : [];
 
-  return list.map((m) => ({
-    eaMemberId: String(m.playerId ?? m.id),
-    gamertag: m.name ?? m.gamertag ?? "Desconhecido",
-    position: mapPosition(m.favoritePosition ?? m.position),
-    overallRating: Number(m.proOverall ?? m.overallRating ?? 0),
-    gamesPlayed: Number(m.gamesPlayed ?? 0),
-    goals: Number(m.goals ?? 0),
-    assists: Number(m.assists ?? 0),
-    passesMade: Number(m.passesMade ?? 0),
-    passesAttempted: Number(m.passAttempts ?? m.passesAttempted ?? 0),
-    avgMatchRating: Number(m.ratingAve ?? m.avgMatchRating ?? 0),
-    manOfTheMatch: Number(m.manOfTheMatch ?? 0),
-  }));
+  return list.map((m: any) => {
+    const successRate = Number(m.passSuccessRate ?? 100);
+    const passesMade = Number(m.passesMade ?? 0);
+    // Evitar NaN na divisão por zero ou taxa zero
+    const passesAttempted = successRate > 0 
+      ? Math.round(passesMade / (successRate / 100)) 
+      : passesMade;
+
+    return {
+      eaMemberId: String(m.name),
+      gamertag: m.name ?? "Desconhecido",
+      position: mapPosition(m.favoritePosition ?? m.proPos),
+      overallRating: Number(m.proOverall ?? 0),
+      gamesPlayed: Number(m.gamesPlayed ?? 0),
+      goals: Number(m.goals ?? 0),
+      assists: Number(m.assists ?? 0),
+      passesMade: passesMade,
+      passesAttempted: passesAttempted,
+      avgMatchRating: Number(m.ratingAve ?? 0),
+      manOfTheMatch: Number(m.manOfTheMatch ?? 0),
+    };
+  });
 }
 
-function mapMatches(raw: unknown, clubId: string, matchType: MatchType): MatchSummary[] {
+function mapMatches(raw: unknown, clubId: string, matchType: MatchType): (MatchSummary & { raw: any })[] {
   const list = Array.isArray(raw) ? raw : [];
 
-  return list.map((match) => {
+  return list.map((match: any) => {
     const clubs = match.clubs ?? {};
     const own = clubs[clubId];
     const opponentId = Object.keys(clubs).find((id) => id !== clubId);
@@ -185,41 +186,47 @@ function mapMatches(raw: unknown, clubId: string, matchType: MatchType): MatchSu
     const goalsFor = Number(own?.goals ?? 0);
     const goalsAgainst = Number(opponent?.goals ?? 0);
 
+    const players: PlayerMatchAppearance[] = [];
+    if (match.players && match.players[clubId]) {
+      Object.entries(match.players[clubId]).forEach(([gamertag, stats]: [string, any]) => {
+        players.push({
+          gamertag,
+          rating: Number(stats.rating ?? 0),
+          goals: Number(stats.goals ?? 0),
+          assists: Number(stats.assists ?? 0),
+          passesMade: Number(stats.passesmade ?? 0),
+          passesAttempted: Number(stats.passesattempted ?? 0),
+          motm: stats.mom === "1",
+        });
+      });
+    }
+
     return {
       eaMatchId: String(match.matchId),
       matchType,
       playedAt: new Date(Number(match.timestamp) * 1000),
-      opponentName: opponent?.details?.name ?? "Adversário desconhecido",
+      opponentName: opponent?.details?.name ?? "Adversário",
       opponentCrestUrl: opponent?.details?.crestAssetId
         ? crestUrlFromAssetId(opponent.details.crestAssetId)
         : null,
       goalsFor,
       goalsAgainst,
       result: goalsFor > goalsAgainst ? "WIN" : goalsFor < goalsAgainst ? "LOSS" : "DRAW",
+      players,
+      raw: match,
     };
   });
 }
 
 function mapPosition(value: string | undefined): Position {
-  switch ((value ?? "").toLowerCase()) {
-    case "goalkeeper":
-    case "gk":
-      return "GOALKEEPER";
-    case "defender":
-    case "def":
-      return "DEFENDER";
-    case "midfielder":
-    case "mid":
-      return "MIDFIELDER";
-    case "forward":
-    case "att":
-      return "FORWARD";
-    default:
-      return "ANY";
-  }
+  const pos = (value ?? "").toLowerCase();
+  if (pos.includes("goalkeeper") || pos === "0") return "GOALKEEPER";
+  if (pos.includes("defender") || ["1", "3", "7", "8"].includes(pos)) return "DEFENDER";
+  if (pos.includes("midfielder") || ["10", "12", "14", "15", "16"].includes(pos)) return "MIDFIELDER";
+  if (pos.includes("forward") || ["23", "25"].includes(pos)) return "FORWARD";
+  return "ANY";
 }
 
 function crestUrlFromAssetId(assetId: string): string {
-  // placeholder — confirmar o CDN real de escudos da EA na Fase 1
-  return `https://media.contentapi.ea.com/content/dam/eacom/fc/pro-clubs/crests/${assetId}.png`;
+  return `https://media.contentapi.ea.com/content/dam/eacom/fc/pro-clubs/crests/crest_${assetId}.png`;
 }

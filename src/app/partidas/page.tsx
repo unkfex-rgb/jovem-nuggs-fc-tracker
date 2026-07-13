@@ -1,10 +1,17 @@
-// TODO (Fase 2): trocar mock-data por leitura real do banco, com paginação
-// (a EA costuma limitar quantas partidas voltam por chamada — ver docs/ea-endpoints.md).
+// Fase 2 — Jovem Nuggs FC
+// Página de partidas conectada ao banco de dados local.
 
 import { MatchHistoryList } from "@/components/MatchHistoryList";
-import { mockMatches } from "@/lib/mock-data";
+import { db } from "@/lib/db";
 
-export default function MatchesPage() {
+export const dynamic = "force-dynamic";
+
+export default async function MatchesPage() {
+  const matches = await db.match.findMany({
+    orderBy: { playedAt: "desc" },
+    take: 50,
+  });
+
   return (
     <div className="space-y-8">
       <div>
@@ -15,7 +22,7 @@ export default function MatchesPage() {
         <p className="mt-1 text-sm text-fog-500">League, playoff e amistosos, mais recentes primeiro.</p>
       </div>
 
-      <MatchHistoryList matches={mockMatches} />
+      <MatchHistoryList matches={matches as any} />
     </div>
   );
 }
