@@ -45,15 +45,16 @@ export interface MatchSummary {
   goalsFor: number;
   goalsAgainst: number;
   result: MatchResult;
+  players?: PlayerMatchAppearance[];
 }
 
 export interface PlayerMatchAppearance {
-  eaMatchId: string;
-  playedAt: Date;
-  opponentName: string;
+  gamertag: string;
   rating: number;
   goals: number;
   assists: number;
+  passesMade: number;
+  passesAttempted: number;
   motm: boolean;
 }
 
