@@ -1,0 +1,113 @@
+// Schema do banco — Jovem Nuggs FC
+// Cache local dos dados da EA. Ver docs/ea-endpoints.md pra origem dos dados
+// e MANUS_PROMPT.md Fase 1 pra ligar isso à sincronização real.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Club {
+  id            String   @id @default(cuid())
+  eaClubId      String   @unique
+  name          String
+  crestUrl      String?
+  skillRating   Int      @default(0)
+  wins          Int      @default(0)
+  draws         Int      @default(0)
+  losses        Int      @default(0)
+  goalsFor      Int      @default(0)
+  goalsAgainst  Int      @default(0)
+  division      String?
+  reputationTier String? // ex: "Emerging Stars"
+  lastSyncedAt  DateTime?
+  members       Member[]
+  matches       Match[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Member {
+  id             String   @id @default(cuid())
+  club           Club     @relation(fields: [clubId], references: [id])
+  clubId         String
+  eaMemberId     String   @unique
+  gamertag       String
+  position       Position
+  overallRating  Int      @default(0)
+  gamesPlayed    Int      @default(0)
+  goals          Int      @default(0)
+  assists        Int      @default(0)
+  passesMade     Int      @default(0)
+  passesAttempted Int     @default(0)
+  avgMatchRating Float    @default(0)
+  manOfTheMatch  Int      @default(0)
+  appearances    MatchAppearance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clubId])
+}
+
+enum Position {
+  GOALKEEPER
+  DEFENDER
+  MIDFIELDER
+  FORWARD
+  ANY
+}
+
+model Match {
+  id            String    @id @default(cuid())
+  club          Club      @relation(fields: [clubId], references: [id])
+  clubId        String
+  eaMatchId     String    @unique
+  matchType     MatchType
+  playedAt      DateTime
+  opponentName  String
+  opponentCrestUrl String?
+  goalsFor      Int
+  goalsAgainst  Int
+  result        MatchResult
+  rawPayload    Json?     // payload bruto da EA, pra não perder campo novo
+  appearances   MatchAppearance[]
+
+  createdAt DateTime @default(now())
+
+  @@index([clubId, playedAt])
+}
+
+enum MatchType {
+  LEAGUE
+  PLAYOFF
+  FRIENDLY
+}
+
+enum MatchResult {
+  WIN
+  DRAW
+  LOSS
+}
+
+// Desempenho individual de um membro numa partida específica
+model MatchAppearance {
+  id        String  @id @default(cuid())
+  match     Match   @relation(fields: [matchId], references: [id])
+  matchId   String
+  member    Member  @relation(fields: [memberId], references: [id])
+  memberId  String
+  rating    Float
+  goals     Int     @default(0)
+  assists   Int     @default(0)
+  passesMade Int    @default(0)
+  passesAttempted Int @default(0)
+  motm      Boolean @default(false)
+
+  @@unique([matchId, memberId])
+}
